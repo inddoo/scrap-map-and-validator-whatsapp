@@ -1,0 +1,6 @@
+# WhatsApp Validator Requirements
+whatsapp-web.py
+selenium
+webdriver-manager
+pandas
+openpyxl
