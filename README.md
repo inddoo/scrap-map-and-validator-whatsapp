@@ -27,6 +27,14 @@
 - **CSV Preview & Edit** - Preview uploaded CSV and remove unnecessary columns
 - **Export Results** - Download validation results as CSV
 
+### 📨 WhatsApp Auto Sender (NEW!)
+- **Single Message** - Send message to one number
+- **Bulk Messages** - Send same message to multiple numbers
+- **Personalized Messages** - Send customized messages using templates
+- **Anti-Spam Delay** - Random delay between messages to avoid detection
+- **Delivery Status** - Track which messages were sent successfully
+- **Smart Retry** - Option to stop or continue on errors
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -182,6 +190,11 @@ export const API_BASE_URL = 'http://localhost:8000'
 - `GET /wa/export` - Export results to CSV
 - `POST /wa/close` - Close WhatsApp session
 
+### WhatsApp Auto Sender
+- `POST /wa/send` - Send single message
+- `POST /wa/send-bulk` - Send bulk messages (same message to all)
+- `POST /wa/send-personalized` - Send personalized messages (template)
+
 ## 🛡️ How WhatsApp Validation Works
 
 ### Primary Method: Store.QueryExist
@@ -246,6 +259,9 @@ kill_chrome.bat
 - 💼 **Business Intelligence** - Identify WhatsApp Business accounts
 - 📊 **Market Research** - Collect business data by category and location
 - 🤖 **Automation** - Automate repetitive data collection tasks
+- 📨 **Bulk Messaging** - Send promotional messages to validated contacts
+- 🎯 **Personalized Outreach** - Send customized messages to leads
+- 📢 **Broadcast Campaigns** - Announce promotions or updates to customers
 
 ## 🎯 Best Practices
 

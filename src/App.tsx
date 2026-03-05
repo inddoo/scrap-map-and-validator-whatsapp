@@ -101,7 +101,7 @@ function App() {
     const [progress, setProgress] = useState({ current: 0, total: 0, message: '', current_place: '' })
 
     // WA Validation state
-    const [activeTab, setActiveTab] = useState<'scraper' | 'wa-validator'>('scraper')
+    const [activeTab, setActiveTab] = useState<'scraper' | 'wa-validator' | 'wa-sender'>('scraper')
     const [waInitialized, setWaInitialized] = useState(false)
     const [waInitializing, setWaInitializing] = useState(false)
     const [waValidating, setWaValidating] = useState(false)
@@ -111,6 +111,18 @@ function App() {
     const [csvData, setCsvData] = useState<string[]>([])  // Store CSV phone numbers
     const [csvFileName, setCsvFileName] = useState('')
     const [csvPreview, setCsvPreview] = useState<{ headers: string[], rows: string[][] }>({ headers: [], rows: [] })  // Store full CSV preview
+
+    // WA Sender state
+    const [senderPhoneNumbers, setSenderPhoneNumbers] = useState('')
+    const [senderMessage, setSenderMessage] = useState('')
+    const [senderMinDelay, setSenderMinDelay] = useState(5)
+    const [senderMaxDelay, setSenderMaxDelay] = useState(10)
+    const [senderResults, setSenderResults] = useState<any[]>([])
+    const [senderSummary, setSenderSummary] = useState<any>(null)
+    const [isSending, setIsSending] = useState(false)
+    const [senderCsvData, setSenderCsvData] = useState<string[]>([])
+    const [senderCsvFileName, setSenderCsvFileName] = useState('')
+    const [senderCsvPreview, setSenderCsvPreview] = useState<{ headers: string[], rows: string[][] }>({ headers: [], rows: [] })
 
     // Modal state
     const [modal, setModal] = useState<{
@@ -594,6 +606,147 @@ function App() {
         }
     }
 
+    // WhatsApp Sender Functions
+    const handleSendBulkMessages = async () => {
+        if (!waInitialized) {
+            showModal('WhatsApp Belum Siap', 'Silakan inisialisasi WhatsApp checker terlebih dahulu!', 'warning')
+            return
+        }
+
+        // Gunakan nomor dari CSV jika ada, jika tidak gunakan dari textarea
+        let numbers: string[] = []
+
+        if (senderCsvData.length > 0) {
+            numbers = senderCsvData
+        } else if (senderPhoneNumbers.trim()) {
+            numbers = senderPhoneNumbers
+                .split('\n')
+                .map(n => n.trim())
+                .filter(n => n.length > 0)
+        }
+
+        if (numbers.length === 0) {
+            showModal('Nomor Kosong', 'Masukkan nomor telepon atau upload CSV terlebih dahulu!', 'warning')
+            return
+        }
+
+        if (!senderMessage.trim()) {
+            showModal('Pesan Kosong', 'Masukkan pesan yang akan dikirim!', 'warning')
+            return
+        }
+
+        setIsSending(true)
+        try {
+            const response = await fetch('http://localhost:8000/wa/send-bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone_numbers: numbers,
+                    message: senderMessage,
+                    min_delay: senderMinDelay,
+                    max_delay: senderMaxDelay,
+                    stop_on_error: false
+                })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json()
+                showModal('Error', errorData.detail || 'Gagal mengirim pesan', 'error')
+                return
+            }
+
+            const data = await response.json()
+            setSenderResults(data.results)
+            setSenderSummary(data.summary)
+
+            showModal(
+                'Pengiriman Selesai!',
+                `Berhasil mengirim ke ${data.summary.sent} dari ${data.summary.total} nomor!\n\n` +
+                `✅ Terkirim: ${data.summary.sent} (${data.summary.sent_percent}%)\n` +
+                `❌ Gagal: ${data.summary.failed} (${data.summary.failed_percent}%)`,
+                data.summary.sent > 0 ? 'success' : 'warning'
+            )
+
+            // Clear CSV after sending
+            setSenderCsvData([])
+            setSenderCsvFileName('')
+            setSenderCsvPreview({ headers: [], rows: [] })
+        } catch (error) {
+            console.error('Error sending messages:', error)
+            showModal('Error', 'Gagal mengirim pesan.\n\nPastikan backend berjalan.', 'error')
+        } finally {
+            setIsSending(false)
+        }
+    }
+
+    const handleUploadSenderCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0]
+        if (!file) return
+
+        try {
+            const text = await file.text()
+            const lines = text.split('\n').filter(line => line.trim())
+
+            if (lines.length === 0) {
+                showModal('CSV Kosong', 'File CSV tidak berisi data!', 'warning')
+                return
+            }
+
+            // Parse CSV header
+            const headers = lines[0].split(',').map(h => h.trim())
+            const headersLower = headers.map(h => h.toLowerCase())
+            const phoneIndex = headersLower.findIndex(h => h === 'phone' || h === 'nomor' || h === 'telepon')
+
+            if (phoneIndex === -1) {
+                showModal('Format CSV Salah', 'CSV harus memiliki kolom "phone"!', 'error')
+                return
+            }
+
+            // Extract phone numbers and full rows
+            const phones: string[] = []
+            const rows: string[][] = []
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.trim())
+                if (values[phoneIndex]) {
+                    const phone = values[phoneIndex].replace(/[^0-9]/g, '')
+                    if (phone) {
+                        phones.push(phone)
+                        rows.push(values)
+                    }
+                }
+            }
+
+            if (phones.length === 0) {
+                showModal('Tidak Ada Nomor', 'Tidak ada nomor telepon valid di CSV!', 'warning')
+                return
+            }
+
+            setSenderCsvData(phones)
+            setSenderCsvFileName(file.name)
+            setSenderCsvPreview({ headers, rows })
+            showModal('CSV Berhasil Dimuat!', `Berhasil memuat ${phones.length} nomor dari ${file.name}\n\nSilakan tulis pesan dan klik "Kirim Pesan".`, 'success')
+        } catch (error) {
+            console.error('Error reading CSV:', error)
+            showModal('Error', 'Gagal membaca file CSV!', 'error')
+        } finally {
+            event.target.value = ''
+        }
+    }
+
+    const handleClearSenderCSV = () => {
+        setSenderCsvData([])
+        setSenderCsvFileName('')
+        setSenderCsvPreview({ headers: [], rows: [] })
+    }
+
+    const handleDeleteSenderCSVRow = (index: number) => {
+        const newRows = senderCsvPreview.rows.filter((_, i) => i !== index)
+        const newPhones = senderCsvData.filter((_, i) => i !== index)
+        setSenderCsvPreview({ ...senderCsvPreview, rows: newRows })
+        setSenderCsvData(newPhones)
+    }
+
     return (
         <>
             <Modal {...modal} onClose={closeModal} />
@@ -609,7 +762,7 @@ function App() {
                     </div>
 
                     {/* Tabs */}
-                    <div className="flex gap-4 mb-6 justify-center">
+                    <div className="flex gap-4 mb-6 justify-center flex-wrap">
                         <button
                             onClick={() => setActiveTab('scraper')}
                             className={`px-8 py-4 font-bold rounded-xl transition-all duration-200 ${activeTab === 'scraper'
@@ -626,7 +779,16 @@ function App() {
                                 : 'bg-white/20 text-white hover:bg-white/30'
                                 }`}
                         >
-                            💼 WA Business Validator
+                            💼 WA Validator
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('wa-sender')}
+                            className={`px-8 py-4 font-bold rounded-xl transition-all duration-200 ${activeTab === 'wa-sender'
+                                ? 'bg-white text-purple-700 shadow-xl scale-105'
+                                : 'bg-white/20 text-white hover:bg-white/30'
+                                }`}
+                        >
+                            📨 WA Auto Sender
                         </button>
                     </div>
 
@@ -1181,6 +1343,318 @@ function App() {
                                                         </td>
                                                         <td className="px-4 py-3 text-gray-700 font-medium">
                                                             {result.business_name || '-'}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-sm text-gray-600">
+                                                            {result.status}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* WA Auto Sender Tab */}
+                    {activeTab === 'wa-sender' && (
+                        <div className="animate-fade-in">
+                            {/* WA Sender Panel */}
+                            <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8 mb-6">
+                                <div className="text-center mb-6">
+                                    <h2 className="text-3xl font-bold text-purple-700 mb-2">📨 WhatsApp Auto Sender</h2>
+                                    <p className="text-gray-600">
+                                        Kirim pesan otomatis ke banyak nomor WhatsApp
+                                    </p>
+                                </div>
+
+                                {!waInitialized ? (
+                                    <div className="max-w-2xl mx-auto">
+                                        <div className="bg-gradient-to-r from-red-50 to-pink-50 border-2 border-red-200 rounded-xl p-6 mb-6">
+                                            <div className="flex items-start gap-4">
+                                                <span className="text-4xl">⚠️</span>
+                                                <div>
+                                                    <h3 className="font-bold text-red-900 mb-2">WhatsApp Belum Diinisialisasi</h3>
+                                                    <p className="text-red-800 text-sm mb-3">
+                                                        Silakan inisialisasi WhatsApp terlebih dahulu di tab "WA Validator"
+                                                    </p>
+                                                    <button
+                                                        onClick={() => setActiveTab('wa-validator')}
+                                                        className="px-6 py-2 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-colors"
+                                                    >
+                                                        Ke WA Validator →
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="max-w-4xl mx-auto">
+                                        {/* Warning */}
+                                        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border-2 border-yellow-300 rounded-xl p-4 mb-6">
+                                            <div className="flex items-start gap-3">
+                                                <span className="text-2xl">⚠️</span>
+                                                <div className="text-sm">
+                                                    <p className="font-bold text-yellow-900 mb-1">PENTING - Gunakan dengan Bijak!</p>
+                                                    <ul className="text-yellow-800 space-y-1">
+                                                        <li>✅ Gunakan delay minimal 5 detik antar pesan</li>
+                                                        <li>✅ Kirim maksimal 50-100 nomor per batch</li>
+                                                        <li>❌ JANGAN spam atau kirim pesan tidak diinginkan</li>
+                                                        <li>⚠️ Risiko: WhatsApp bisa ban akun jika terdeteksi spam</li>
+                                                    </ul>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Input Form */}
+                                        <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-6 mb-6 border-2 border-purple-200">
+                                            <h3 className="text-xl font-bold text-purple-700 mb-4 text-center">
+                                                📝 Kirim Pesan Massal
+                                            </h3>
+
+                                            {/* CSV Upload Section */}
+                                            <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-3">
+                                                    📁 Upload CSV (Opsional)
+                                                </label>
+                                                <div className="flex gap-3">
+                                                    <label className="flex-1 cursor-pointer">
+                                                        <input
+                                                            type="file"
+                                                            accept=".csv"
+                                                            onChange={handleUploadSenderCSV}
+                                                            className="hidden"
+                                                        />
+                                                        <div className="px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 text-center shadow-lg">
+                                                            📤 Upload CSV
+                                                        </div>
+                                                    </label>
+                                                    {senderCsvFileName && (
+                                                        <button
+                                                            onClick={handleClearSenderCSV}
+                                                            className="px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white font-bold rounded-lg hover:from-red-600 hover:to-red-700 transition-all duration-200 shadow-lg"
+                                                        >
+                                                            🗑️ Hapus CSV
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {senderCsvFileName && (
+                                                    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                                        <div className="flex items-center gap-2 text-green-700">
+                                                            <span className="text-lg">✅</span>
+                                                            <span className="font-semibold">{senderCsvFileName}</span>
+                                                            <span className="text-sm">({senderCsvData.length} nomor)</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <div className="mt-2 text-xs text-gray-500">
+                                                    💡 CSV harus memiliki kolom "phone" dengan nomor format 628xxx
+                                                </div>
+                                            </div>
+
+                                            {/* CSV Preview Table */}
+                                            {senderCsvPreview.rows.length > 0 && (
+                                                <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                    <h4 className="text-sm font-semibold text-gray-700 mb-3">📋 Preview Data CSV</h4>
+                                                    <div className="overflow-auto" style={{ maxHeight: '40vh' }}>
+                                                        <table className="w-full min-w-full border-collapse">
+                                                            <thead className="sticky top-0 bg-gradient-to-r from-purple-100 to-indigo-100">
+                                                                <tr>
+                                                                    <th className="px-3 py-2 text-left text-xs font-bold text-purple-700 border-b-2 border-purple-300">No</th>
+                                                                    {senderCsvPreview.headers.map((header, idx) => (
+                                                                        <th key={idx} className="px-3 py-2 text-left text-xs font-bold text-purple-700 border-b-2 border-purple-300">
+                                                                            {header}
+                                                                        </th>
+                                                                    ))}
+                                                                    <th className="px-3 py-2 text-center text-xs font-bold text-purple-700 border-b-2 border-purple-300">Aksi</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {senderCsvPreview.rows.map((row, rowIdx) => (
+                                                                    <tr key={rowIdx} className="border-b border-gray-200 hover:bg-purple-50 transition-colors">
+                                                                        <td className="px-3 py-2 text-xs text-gray-600 font-semibold">{rowIdx + 1}</td>
+                                                                        {row.map((cell, cellIdx) => (
+                                                                            <td key={cellIdx} className="px-3 py-2 text-xs text-gray-700">
+                                                                                {cell}
+                                                                            </td>
+                                                                        ))}
+                                                                        <td className="px-3 py-2 text-center">
+                                                                            <button
+                                                                                onClick={() => handleDeleteSenderCSVRow(rowIdx)}
+                                                                                className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded hover:bg-red-600 transition-colors"
+                                                                            >
+                                                                                🗑️
+                                                                            </button>
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Phone Numbers - Only show if no CSV */}
+                                            {senderCsvData.length === 0 && (
+                                                <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                        Nomor Telepon (satu per baris)
+                                                    </label>
+                                                    <textarea
+                                                        value={senderPhoneNumbers}
+                                                        onChange={(e) => setSenderPhoneNumbers(e.target.value)}
+                                                        placeholder="628123456789&#10;628987654321&#10;628555666777"
+                                                        rows={6}
+                                                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition-all duration-200 text-gray-800 font-mono text-sm resize-none"
+                                                    />
+                                                    <div className="mt-2 text-xs text-gray-500">
+                                                        💡 Format: 628xxx (angka setelah +62)
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Message */}
+                                            <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                    Pesan yang Akan Dikirim
+                                                </label>
+                                                <textarea
+                                                    value={senderMessage}
+                                                    onChange={(e) => setSenderMessage(e.target.value)}
+                                                    placeholder="Halo! 👋&#10;&#10;Ini pesan broadcast dari kami.&#10;&#10;Terima kasih!"
+                                                    rows={8}
+                                                    className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition-all duration-200 text-gray-800 text-sm resize-none"
+                                                />
+                                                <div className="mt-2 text-xs text-gray-500">
+                                                    💡 Tips: Gunakan emoji dan multi-line untuk pesan lebih menarik
+                                                </div>
+                                            </div>
+
+                                            {/* Delay Settings */}
+                                            <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                <label className="block text-sm font-semibold text-gray-700 mb-3">
+                                                    ⏱️ Delay Antar Pesan (Anti-Spam)
+                                                </label>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label className="block text-xs text-gray-600 mb-1">Minimum (detik)</label>
+                                                        <input
+                                                            type="number"
+                                                            value={senderMinDelay}
+                                                            onChange={(e) => setSenderMinDelay(parseInt(e.target.value) || 5)}
+                                                            min="3"
+                                                            max="30"
+                                                            className="w-full px-4 py-2 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none text-gray-800 font-semibold"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-xs text-gray-600 mb-1">Maximum (detik)</label>
+                                                        <input
+                                                            type="number"
+                                                            value={senderMaxDelay}
+                                                            onChange={(e) => setSenderMaxDelay(parseInt(e.target.value) || 10)}
+                                                            min="5"
+                                                            max="60"
+                                                            className="w-full px-4 py-2 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 outline-none text-gray-800 font-semibold"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="mt-2 text-xs text-gray-500">
+                                                    💡 Rekomendasi: Min 5-10 detik, Max 10-15 detik untuk keamanan
+                                                </div>
+                                            </div>
+
+                                            {/* Send Button */}
+                                            <button
+                                                onClick={handleSendBulkMessages}
+                                                disabled={isSending || (senderCsvData.length === 0 && !senderPhoneNumbers.trim()) || !senderMessage.trim()}
+                                                className="w-full px-8 py-5 bg-gradient-to-r from-green-600 to-emerald-600 text-white text-xl font-bold rounded-xl hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200 shadow-2xl flex items-center justify-center gap-3"
+                                            >
+                                                {isSending ? (
+                                                    <>
+                                                        <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                        Mengirim Pesan...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                                        </svg>
+                                                        {senderCsvData.length > 0
+                                                            ? `Kirim ke ${senderCsvData.length} Nomor`
+                                                            : 'Kirim Pesan Sekarang'}
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Summary */}
+                            {senderSummary && (
+                                <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-6 mb-6">
+                                    <h3 className="text-2xl font-bold text-purple-700 mb-4 text-center">📊 Ringkasan Pengiriman</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto">
+                                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 border-2 border-blue-200 text-center">
+                                            <div className="text-blue-600 text-sm font-semibold mb-2">TOTAL NOMOR</div>
+                                            <div className="text-4xl font-bold text-blue-700">{senderSummary.total}</div>
+                                        </div>
+                                        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 border-2 border-green-200 text-center">
+                                            <div className="text-green-600 text-sm font-semibold mb-2">TERKIRIM</div>
+                                            <div className="text-4xl font-bold text-green-700">
+                                                {senderSummary.sent}
+                                            </div>
+                                            <div className="text-sm text-green-600 mt-1">
+                                                {senderSummary.sent_percent}%
+                                            </div>
+                                        </div>
+                                        <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-6 border-2 border-red-200 text-center">
+                                            <div className="text-red-600 text-sm font-semibold mb-2">GAGAL</div>
+                                            <div className="text-4xl font-bold text-red-700">
+                                                {senderSummary.failed}
+                                            </div>
+                                            <div className="text-sm text-red-600 mt-1">
+                                                {senderSummary.failed_percent}%
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Results Table */}
+                            {senderResults.length > 0 && (
+                                <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-6 overflow-x-auto">
+                                    <h3 className="text-2xl font-bold text-purple-700 mb-4 text-center">📋 Detail Hasil Pengiriman</h3>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[600px]">
+                                            <thead>
+                                                <tr className="bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700">
+                                                    <th className="px-4 py-3 text-center font-bold rounded-tl-lg">No</th>
+                                                    <th className="px-4 py-3 text-left font-bold">Nomor</th>
+                                                    <th className="px-4 py-3 text-center font-bold">Status Kirim</th>
+                                                    <th className="px-4 py-3 text-left font-bold rounded-tr-lg">Keterangan</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {senderResults.map((result, index) => (
+                                                    <tr key={index} className="border-b border-gray-200 hover:bg-purple-50 transition-colors">
+                                                        <td className="px-4 py-3 text-center font-semibold text-gray-600">{index + 1}</td>
+                                                        <td className="px-4 py-3 font-mono text-sm text-gray-800">{result.phone}</td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            {result.message_sent ? (
+                                                                <span className="inline-block px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-bold">
+                                                                    ✅ Terkirim
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-block px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-bold">
+                                                                    ❌ Gagal
+                                                                </span>
+                                                            )}
                                                         </td>
                                                         <td className="px-4 py-3 text-sm text-gray-600">
                                                             {result.status}

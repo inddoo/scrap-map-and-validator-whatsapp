@@ -427,3 +427,163 @@ async def close_wa_checker_handler():
     except Exception as e:
         print(f"Error closing: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Global WA sender instance
+wa_sender = None
+
+
+async def send_wa_message_handler(request):
+    """
+    Send single WhatsApp message
+    
+    Args:
+        request: WASendMessageRequest
+        
+    Returns:
+        dict: Send result
+    """
+    global wa_checker, wa_sender
+    
+    try:
+        if wa_checker is None or wa_checker.driver is None:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp not initialized. Please call /wa/init first."
+            )
+        
+        # Initialize sender if not exists
+        if wa_sender is None:
+            from wa_validator.wa_sender import WAAutoSender
+            wa_sender = WAAutoSender(wa_checker.driver)
+        
+        print(f"Sending message to: {request.phone}")
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            wa_sender.send_message,
+            request.phone,
+            request.message,
+            request.delay
+        )
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error sending message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def send_wa_bulk_handler(request):
+    """
+    Send bulk WhatsApp messages
+    
+    Args:
+        request: WASendBulkRequest
+        
+    Returns:
+        WASendResponse: Send results and summary
+    """
+    global wa_checker, wa_sender
+    
+    try:
+        if wa_checker is None or wa_checker.driver is None:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp not initialized. Please call /wa/init first."
+            )
+        
+        # Initialize sender if not exists
+        if wa_sender is None:
+            from wa_validator.wa_sender import WAAutoSender
+            wa_sender = WAAutoSender(wa_checker.driver)
+        
+        print(f"Sending bulk messages to {len(request.phone_numbers)} numbers")
+        
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            executor,
+            wa_sender.send_bulk_messages,
+            request.phone_numbers,
+            request.message,
+            request.min_delay,
+            request.max_delay,
+            request.stop_on_error
+        )
+        
+        summary = wa_sender.get_summary()
+        
+        return {
+            "success": True,
+            "results": results,
+            "summary": summary
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error sending bulk messages: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def send_wa_personalized_handler(request):
+    """
+    Send personalized WhatsApp messages
+    
+    Args:
+        request: WASendPersonalizedRequest
+        
+    Returns:
+        WASendResponse: Send results and summary
+    """
+    global wa_checker, wa_sender
+    
+    try:
+        if wa_checker is None or wa_checker.driver is None:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp not initialized. Please call /wa/init first."
+            )
+        
+        # Initialize sender if not exists
+        if wa_sender is None:
+            from wa_validator.wa_sender import WAAutoSender
+            wa_sender = WAAutoSender(wa_checker.driver)
+        
+        print(f"Sending personalized messages to {len(request.contacts)} contacts")
+        
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            executor,
+            wa_sender.send_personalized_messages,
+            request.contacts,
+            request.message_template,
+            request.min_delay,
+            request.max_delay
+        )
+        
+        summary = wa_sender.get_summary()
+        
+        return {
+            "success": True,
+            "results": results,
+            "summary": summary
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error sending personalized messages: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

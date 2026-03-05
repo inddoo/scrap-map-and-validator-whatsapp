@@ -14,9 +14,18 @@ from api.routes import (
     validate_wa_numbers_handler,
     validate_wa_csv_handler,
     export_wa_results_handler,
-    close_wa_checker_handler
+    close_wa_checker_handler,
+    send_wa_message_handler,
+    send_wa_bulk_handler,
+    send_wa_personalized_handler
 )
-from api.schemas import ScrapeRequest, WAValidationRequest
+from api.schemas import (
+    ScrapeRequest, 
+    WAValidationRequest,
+    WASendMessageRequest,
+    WASendBulkRequest,
+    WASendPersonalizedRequest
+)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -43,7 +52,8 @@ def read_root():
         "version": "1.0.0",
         "endpoints": {
             "scraper": ["/scrape", "/progress", "/stop-scraping", "/export-csv"],
-            "wa_validator": ["/wa/init", "/wa/validate", "/wa/validate-csv", "/wa/export", "/wa/close"]
+            "wa_validator": ["/wa/init", "/wa/validate", "/wa/validate-csv", "/wa/export", "/wa/close"],
+            "wa_sender": ["/wa/send", "/wa/send-bulk", "/wa/send-personalized"]
         }
     }
 
@@ -108,3 +118,25 @@ async def export_wa_results():
 async def close_wa_checker():
     """Close WhatsApp checker"""
     return await close_wa_checker_handler()
+
+
+# ============================================================
+# WHATSAPP AUTO SENDER ENDPOINTS
+# ============================================================
+
+@app.post("/wa/send")
+async def send_wa_message(request: WASendMessageRequest):
+    """Send single WhatsApp message"""
+    return await send_wa_message_handler(request)
+
+
+@app.post("/wa/send-bulk")
+async def send_wa_bulk(request: WASendBulkRequest):
+    """Send bulk WhatsApp messages"""
+    return await send_wa_bulk_handler(request)
+
+
+@app.post("/wa/send-personalized")
+async def send_wa_personalized(request: WASendPersonalizedRequest):
+    """Send personalized WhatsApp messages"""
+    return await send_wa_personalized_handler(request)
