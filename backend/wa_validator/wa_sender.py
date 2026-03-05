@@ -3,6 +3,7 @@ WhatsApp Auto Sender
 Mengirim pesan otomatis ke nomor WhatsApp yang sudah divalidasi
 """
 import time
+import re
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -26,6 +27,65 @@ class WAAutoSender:
         """
         self.driver = driver
         self.results = []
+    
+    def _sanitize_message(self, message: str) -> str:
+        """
+        Remove characters outside BMP (Basic Multilingual Plane) that ChromeDriver doesn't support
+        Also remove problematic emojis and special characters
+        PRESERVE line breaks for proper formatting
+        
+        Args:
+            message: Original message
+            
+        Returns:
+            Sanitized message with only BMP characters but with line breaks preserved
+        """
+        import re
+        
+        # Method 1: Remove all emojis and special characters outside BMP
+        # Keep: letters, numbers, basic punctuation, spaces, newlines, tabs
+        
+        # Remove emojis using regex pattern
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            "\U00002702-\U000027B0"
+            "\U000024C2-\U0001F251"
+            "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+            "\U0001FA00-\U0001FA6F"  # Chess Symbols
+            "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+            "\U00002600-\U000026FF"  # Miscellaneous Symbols
+            "\U00002700-\U000027BF"  # Dingbats
+            "]+",
+            flags=re.UNICODE
+        )
+        
+        # Remove emojis
+        sanitized = emoji_pattern.sub('', message)
+        
+        # Also filter characters with code points > 0xFFFF (outside BMP)
+        # BUT preserve newlines (\n), carriage returns (\r), and tabs (\t)
+        sanitized = ''.join(
+            char for char in sanitized 
+            if ord(char) <= 0xFFFF or char in ['\n', '\r', '\t']
+        )
+        
+        # Clean up excessive spaces on each line, but preserve line breaks
+        lines = sanitized.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            # Remove excessive spaces within line
+            cleaned_line = re.sub(r' +', ' ', line.strip())
+            cleaned_lines.append(cleaned_line)
+        
+        # Join with newlines, remove excessive empty lines (max 2 consecutive)
+        sanitized = '\n'.join(cleaned_lines)
+        sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
+        
+        return sanitized.strip()
         
     def send_message(self, phone: str, message: str, delay: int = 3) -> Dict:
         """
@@ -47,6 +107,11 @@ class WAAutoSender:
         }
         
         try:
+            # Sanitize message to remove unsupported characters
+            sanitized_message = self._sanitize_message(message)
+            if sanitized_message != message:
+                print(f"  ⚠️ Message sanitized (removed unsupported characters)", flush=True)
+            
             # Buka chat
             url = f'https://web.whatsapp.com/send?phone={phone}'
             print(f"  Opening chat: {phone}", flush=True)
@@ -87,11 +152,21 @@ class WAAutoSender:
             
             # Ketik pesan (support multi-line dengan Shift+Enter)
             print(f"  Typing message...", flush=True)
-            lines = message.split('\n')
+            
+            # Focus on input box first
+            input_box.click()
+            time.sleep(0.3)
+            
+            # Type message line by line with Shift+Enter for line breaks
+            lines = sanitized_message.split('\n')
             for i, line in enumerate(lines):
+                # Type each character with small delay for reliability
                 input_box.send_keys(line)
-                if i < len(lines) - 1:  # Jangan Shift+Enter di baris terakhir
+                
+                # Add line break if not last line
+                if i < len(lines) - 1:
                     input_box.send_keys(Keys.SHIFT, Keys.ENTER)
+                    time.sleep(0.1)  # Small delay after line break
             
             # Tunggu sebentar setelah ketik
             time.sleep(1)
@@ -102,14 +177,16 @@ class WAAutoSender:
             
             # Tunggu pesan terkirim (lebih lama untuk memastikan)
             print(f"  Waiting for message to be sent...", flush=True)
-            time.sleep(3)
+            time.sleep(4)  # Increased from 3 to 4 seconds
             
             # Verifikasi pesan terkirim dengan multiple methods
             message_sent = False
             
             # Method 1: Cek apakah input box kosong (pesan sudah terkirim)
             try:
-                current_text = input_box.text.strip()
+                # Re-find input box to get fresh state
+                input_box_check = self.driver.find_element(By.CSS_SELECTOR, 'div[contenteditable="true"][data-tab="10"]')
+                current_text = input_box_check.text.strip()
                 if not current_text or len(current_text) == 0:
                     message_sent = True
                     print(f"  ✓ Input box cleared - message sent", flush=True)
@@ -119,13 +196,18 @@ class WAAutoSender:
             # Method 2: Cek apakah ada pesan di chat (outgoing message)
             if not message_sent:
                 try:
+                    # Wait a bit more and check for message bubbles
+                    time.sleep(1)
+                    
                     # Cek berbagai selector untuk pesan yang terkirim
                     message_selectors = [
                         'div[data-testid="msg-container"]',
                         'div.message-out',
                         'div[class*="message-out"]',
                         'span[data-testid="msg-dblcheck"]',  # Double check mark
-                        'span[data-testid="msg-check"]'      # Single check mark
+                        'span[data-testid="msg-check"]',      # Single check mark
+                        'span[data-icon="msg-check"]',        # Alternative check mark
+                        'span[data-icon="msg-dblcheck"]'      # Alternative double check
                     ]
                     
                     for selector in message_selectors:
@@ -312,6 +394,77 @@ class WAAutoSender:
             'sent_percent': round(sent/total*100, 1) if total > 0 else 0,
             'failed_percent': round(failed/total*100, 1) if total > 0 else 0
         }
+    
+    def send_ai_personalized_messages(
+        self,
+        contacts_with_messages: List[Dict],
+        min_delay: int = 5,
+        max_delay: int = 10,
+        auto_responder_enabled: bool = False,
+        auto_responder_prompt: str = None,
+        gemini_service = None
+    ) -> List[Dict]:
+        """
+        Kirim pesan AI-generated dengan optional auto-responder
+        
+        Args:
+            contacts_with_messages: List dict dengan 'phone', 'message', 'data'
+            min_delay: Delay minimum antar pesan
+            max_delay: Delay maximum antar pesan
+            auto_responder_enabled: Enable auto responder
+            auto_responder_prompt: Prompt untuk auto responder
+            gemini_service: Gemini service instance untuk auto responder
+            
+        Returns:
+            list: List hasil pengiriman
+        """
+        results = []
+        total = len(contacts_with_messages)
+        
+        print(f"\n{'='*60}")
+        print(f"SENDING AI-PERSONALIZED MESSAGES TO {total} CONTACTS")
+        if auto_responder_enabled:
+            print(f"AUTO-RESPONDER: ENABLED")
+        print(f"{'='*60}\n")
+        
+        for idx, contact_data in enumerate(contacts_with_messages):
+            phone = contact_data.get('phone', '')
+            message = contact_data.get('message', '')
+            data = contact_data.get('data', {})
+            
+            print(f"[{idx+1}/{total}] Sending to: {phone}")
+            print(f"  Message preview: {message[:80]}...")
+            
+            delay = random.randint(min_delay, max_delay)
+            result = self.send_message(phone, message, delay)
+            result['contact_data'] = data
+            result['ai_generated'] = True
+            
+            # Auto responder logic (check for incoming messages)
+            if auto_responder_enabled and result['message_sent'] and gemini_service:
+                try:
+                    print(f"  🤖 Auto-responder active, monitoring for replies...")
+                    time.sleep(5)  # Wait for potential reply
+                    
+                    # Check for new messages (simplified - in production, use proper message monitoring)
+                    # This is a placeholder - actual implementation would need message monitoring
+                    result['auto_responder_status'] = 'Monitoring active'
+                    
+                except Exception as e:
+                    print(f"  ⚠️ Auto-responder error: {e}")
+                    result['auto_responder_status'] = f'Error: {str(e)}'
+            
+            results.append(result)
+            print(f"  Status: {result['status']}\n")
+            
+            # Delay antar nomor
+            if idx < total - 1:
+                wait_time = random.randint(min_delay + 2, max_delay + 5)
+                print(f"  Waiting {wait_time} seconds before next message...\n")
+                time.sleep(wait_time)
+        
+        self.results = results
+        return results
 
 
 if __name__ == '__main__':

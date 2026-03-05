@@ -587,3 +587,181 @@ async def send_wa_personalized_handler(request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+async def ai_generate_messages_handler(request):
+    """
+    Generate personalized messages using AI
+    
+    Args:
+        request: AIGenerateMessageRequest
+        
+    Returns:
+        AIGenerateMessageResponse: Generated messages for each contact
+    """
+    try:
+        from ai import get_gemini_service
+        
+        gemini = get_gemini_service()
+        messages = []
+        
+        print(f"Generating AI messages for {len(request.csv_data)} contacts")
+        
+        for row in request.csv_data:
+            try:
+                # Generate personalized message
+                message = gemini.generate_personalized_message(
+                    template=request.template,
+                    data=row,
+                    context=request.context
+                )
+                
+                messages.append({
+                    **row,
+                    'generated_message': message
+                })
+                
+            except Exception as e:
+                print(f"Error generating message for {row.get('phone', 'unknown')}: {e}")
+                messages.append({
+                    **row,
+                    'generated_message': f"Error: {str(e)}"
+                })
+        
+        return {
+            "success": True,
+            "messages": messages
+        }
+        
+    except Exception as e:
+        print(f"Error in AI message generation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def ai_auto_responder_handler(request):
+    """
+    Generate auto response using AI
+    
+    Args:
+        request: AIAutoResponderRequest
+        
+    Returns:
+        AIAutoResponderResponse: Generated response message
+    """
+    try:
+        from ai import get_gemini_service
+        
+        gemini = get_gemini_service()
+        
+        print(f"Generating AI response for message: {request.incoming_message[:50]}...")
+        
+        response_message = gemini.generate_auto_response(
+            incoming_message=request.incoming_message,
+            sender_data=request.sender_data,
+            response_prompt=request.response_prompt,
+            conversation_history=request.conversation_history
+        )
+        
+        return {
+            "success": True,
+            "response_message": response_message
+        }
+        
+    except Exception as e:
+        print(f"Error in AI auto responder: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def send_wa_ai_personalized_handler(request):
+    """
+    Send AI-generated personalized messages with optional auto-responder
+    
+    Args:
+        request: WASendAIPersonalizedRequest
+        
+    Returns:
+        WASendResponse: Send results and summary
+    """
+    global wa_checker, wa_sender
+    
+    try:
+        if wa_checker is None or wa_checker.driver is None:
+            raise HTTPException(
+                status_code=400,
+                detail="WhatsApp not initialized. Please call /wa/init first."
+            )
+        
+        # Initialize sender if not exists
+        if wa_sender is None:
+            from wa_validator.wa_sender import WAAutoSender
+            wa_sender = WAAutoSender(wa_checker.driver)
+        
+        from ai import get_gemini_service
+        gemini = get_gemini_service()
+        
+        print(f"Sending AI-personalized messages to {len(request.csv_data)} contacts")
+        
+        # Generate messages for each contact
+        contacts_with_messages = []
+        for row in request.csv_data:
+            try:
+                if request.use_ai:
+                    # Use AI to generate message
+                    message = gemini.generate_personalized_message(
+                        template=request.message_template,
+                        data=row,
+                        context=request.context
+                    )
+                else:
+                    # Simple template replacement
+                    message = request.message_template
+                    for key, value in row.items():
+                        message = message.replace(f"{{{key}}}", str(value))
+                
+                contacts_with_messages.append({
+                    'phone': row.get('phone', ''),
+                    'message': message,
+                    'data': row
+                })
+                
+            except Exception as e:
+                print(f"Error generating message for {row.get('phone', 'unknown')}: {e}")
+                contacts_with_messages.append({
+                    'phone': row.get('phone', ''),
+                    'message': f"Error: {str(e)}",
+                    'data': row
+                })
+        
+        # Send messages
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            executor,
+            wa_sender.send_ai_personalized_messages,
+            contacts_with_messages,
+            request.min_delay,
+            request.max_delay,
+            request.auto_responder_enabled,
+            request.auto_responder_prompt,
+            gemini if request.auto_responder_enabled else None
+        )
+        
+        summary = wa_sender.get_summary()
+        
+        return {
+            "success": True,
+            "results": results,
+            "summary": summary
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error sending AI personalized messages: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

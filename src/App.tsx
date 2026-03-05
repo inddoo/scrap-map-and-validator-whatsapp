@@ -114,6 +114,7 @@ function App() {
 
     // WA Sender state
     const [senderPhoneNumbers, setSenderPhoneNumbers] = useState('')
+    const [senderNames, setSenderNames] = useState('')
     const [senderMessage, setSenderMessage] = useState('')
     const [senderMinDelay, setSenderMinDelay] = useState(5)
     const [senderMaxDelay, setSenderMaxDelay] = useState(10)
@@ -123,6 +124,16 @@ function App() {
     const [senderCsvData, setSenderCsvData] = useState<string[]>([])
     const [senderCsvFileName, setSenderCsvFileName] = useState('')
     const [senderCsvPreview, setSenderCsvPreview] = useState<{ headers: string[], rows: string[][] }>({ headers: [], rows: [] })
+    const [senderFullCsvData, setSenderFullCsvData] = useState<any[]>([])
+
+    // AI Features state
+    const [useAI, setUseAI] = useState(false)
+    const [aiContext, setAiContext] = useState('')
+    const [aiGeneratedMessages, setAiGeneratedMessages] = useState<any[]>([])
+    const [isGeneratingAI, setIsGeneratingAI] = useState(false)
+    const [autoResponderEnabled, setAutoResponderEnabled] = useState(false)
+    const [autoResponderPrompt, setAutoResponderPrompt] = useState('Anda adalah customer service yang ramah dan profesional. Jawab pertanyaan pelanggan dengan sopan dan informatif.')
+    const [geminiApiKey, setGeminiApiKey] = useState('')
 
     // Modal state
     const [modal, setModal] = useState<{
@@ -702,9 +713,10 @@ function App() {
                 return
             }
 
-            // Extract phone numbers and full rows
+            // Extract phone numbers, full rows, and full data objects
             const phones: string[] = []
             const rows: string[][] = []
+            const fullData: any[] = []
 
             for (let i = 1; i < lines.length; i++) {
                 const values = lines[i].split(',').map(v => v.trim())
@@ -713,6 +725,13 @@ function App() {
                     if (phone) {
                         phones.push(phone)
                         rows.push(values)
+
+                        // Create object with all CSV fields
+                        const dataObj: any = {}
+                        headers.forEach((header, idx) => {
+                            dataObj[header.toLowerCase()] = values[idx] || ''
+                        })
+                        fullData.push(dataObj)
                     }
                 }
             }
@@ -725,7 +744,8 @@ function App() {
             setSenderCsvData(phones)
             setSenderCsvFileName(file.name)
             setSenderCsvPreview({ headers, rows })
-            showModal('CSV Berhasil Dimuat!', `Berhasil memuat ${phones.length} nomor dari ${file.name}\n\nSilakan tulis pesan dan klik "Kirim Pesan".`, 'success')
+            setSenderFullCsvData(fullData)
+            showModal('CSV Berhasil Dimuat!', `Berhasil memuat ${phones.length} nomor dari ${file.name}\n\nSilakan tulis pesan atau gunakan AI untuk generate pesan.`, 'success')
         } catch (error) {
             console.error('Error reading CSV:', error)
             showModal('Error', 'Gagal membaca file CSV!', 'error')
@@ -738,13 +758,152 @@ function App() {
         setSenderCsvData([])
         setSenderCsvFileName('')
         setSenderCsvPreview({ headers: [], rows: [] })
+        setSenderFullCsvData([])
+        setAiGeneratedMessages([])
     }
 
     const handleDeleteSenderCSVRow = (index: number) => {
         const newRows = senderCsvPreview.rows.filter((_, i) => i !== index)
         const newPhones = senderCsvData.filter((_, i) => i !== index)
+        const newFullData = senderFullCsvData.filter((_, i) => i !== index)
         setSenderCsvPreview({ ...senderCsvPreview, rows: newRows })
         setSenderCsvData(newPhones)
+        setSenderFullCsvData(newFullData)
+    }
+
+    const handleGenerateAIMessages = async () => {
+        // Check if we have CSV data or manual phone numbers
+        const hasCSV = senderFullCsvData.length > 0
+        const hasManualNumbers = senderPhoneNumbers.trim().length > 0
+
+        if (!hasCSV && !hasManualNumbers) {
+            showModal('Tidak Ada Data', 'Upload CSV atau masukkan nomor telepon terlebih dahulu!', 'warning')
+            return
+        }
+
+        if (!senderMessage.trim()) {
+            showModal('Template Kosong', 'Masukkan template atau instruksi untuk AI!', 'warning')
+            return
+        }
+
+        setIsGeneratingAI(true)
+        try {
+            let csvData = []
+
+            if (hasCSV) {
+                // Use CSV data
+                csvData = senderFullCsvData
+            } else {
+                // Convert manual phone numbers to CSV format
+                const phones = senderPhoneNumbers
+                    .split('\n')
+                    .map(n => n.trim())
+                    .filter(n => n.length > 0)
+
+                // Parse names if provided
+                const names = senderNames.trim().length > 0
+                    ? senderNames.split('\n').map(n => n.trim()).filter(n => n.length > 0)
+                    : []
+
+                csvData = phones.map((phone, index) => ({
+                    phone: phone,
+                    name: names[index] || `Contact ${index + 1}`,
+                    company: '-',
+                    position: '-'
+                }))
+            }
+
+            const response = await fetch('http://localhost:8000/ai/generate-messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    template: senderMessage,
+                    csv_data: csvData,
+                    context: aiContext || null
+                })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json()
+                showModal('Error', errorData.detail || 'Gagal generate pesan AI', 'error')
+                return
+            }
+
+            const data = await response.json()
+            setAiGeneratedMessages(data.messages)
+
+            // If manual input, also update senderFullCsvData for sending
+            if (!hasCSV) {
+                setSenderFullCsvData(csvData)
+            }
+
+            showModal(
+                '🤖 AI Berhasil Generate Pesan!',
+                `Berhasil generate ${data.messages.length} pesan personal!\n\nSilakan review pesan dan klik "Kirim Pesan AI".`,
+                'success'
+            )
+        } catch (error) {
+            console.error('Error generating AI messages:', error)
+            showModal('Error', 'Gagal generate pesan AI.\n\nPastikan backend berjalan dan Gemini API key sudah diset.', 'error')
+        } finally {
+            setIsGeneratingAI(false)
+        }
+    }
+
+    const handleSendAIMessages = async () => {
+        if (!waInitialized) {
+            showModal('WhatsApp Belum Siap', 'Silakan inisialisasi WhatsApp checker terlebih dahulu!', 'warning')
+            return
+        }
+
+        if (aiGeneratedMessages.length === 0) {
+            showModal('Belum Ada Pesan AI', 'Generate pesan AI terlebih dahulu!', 'warning')
+            return
+        }
+
+        setIsSending(true)
+        try {
+            const response = await fetch('http://localhost:8000/wa/send-ai-personalized', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    csv_data: senderFullCsvData,
+                    message_template: senderMessage,
+                    use_ai: useAI,
+                    context: aiContext || null,
+                    min_delay: senderMinDelay,
+                    max_delay: senderMaxDelay,
+                    auto_responder_enabled: autoResponderEnabled,
+                    auto_responder_prompt: autoResponderPrompt || null
+                })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json()
+                showModal('Error', errorData.detail || 'Gagal mengirim pesan', 'error')
+                return
+            }
+
+            const data = await response.json()
+            setSenderResults(data.results)
+            setSenderSummary(data.summary)
+
+            showModal(
+                'Pengiriman Selesai!',
+                `Berhasil mengirim ke ${data.summary.sent} dari ${data.summary.total} nomor!\n\n` +
+                `✅ Terkirim: ${data.summary.sent} (${data.summary.sent_percent}%)\n` +
+                `❌ Gagal: ${data.summary.failed} (${data.summary.failed_percent}%)`,
+                data.summary.sent > 0 ? 'success' : 'warning'
+            )
+
+            // Clear after sending
+            setAiGeneratedMessages([])
+        } catch (error) {
+            console.error('Error sending AI messages:', error)
+            showModal('Error', 'Gagal mengirim pesan.\n\nPastikan backend berjalan.', 'error')
+        } finally {
+            setIsSending(false)
+        }
     }
 
     return (
@@ -1514,22 +1673,162 @@ function App() {
                                                 </div>
                                             )}
 
+                                            {/* Names - Only show if no CSV */}
+                                            {senderCsvData.length === 0 && (
+                                                <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
+                                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                        Nama Pemilik Nomor (opsional, satu per baris)
+                                                    </label>
+                                                    <textarea
+                                                        value={senderNames}
+                                                        onChange={(e) => setSenderNames(e.target.value)}
+                                                        placeholder="John Doe&#10;Jane Smith&#10;Bob Johnson"
+                                                        rows={6}
+                                                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition-all duration-200 text-gray-800 font-mono text-sm resize-none"
+                                                    />
+                                                    <div className="mt-2 text-xs text-gray-500">
+                                                        💡 Urutan nama harus sesuai dengan urutan nomor telepon di atas. Jika tidak diisi, AI akan menggunakan "Contact 1", "Contact 2", dst.
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {/* Message */}
                                             <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
                                                 <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                                    Pesan yang Akan Dikirim
+                                                    {useAI ? 'Template/Instruksi untuk AI' : 'Pesan yang Akan Dikirim'}
                                                 </label>
                                                 <textarea
                                                     value={senderMessage}
                                                     onChange={(e) => setSenderMessage(e.target.value)}
-                                                    placeholder="Halo! 👋&#10;&#10;Ini pesan broadcast dari kami.&#10;&#10;Terima kasih!"
+                                                    placeholder={useAI
+                                                        ? "Contoh: Buatkan pesan promosi yang menarik tentang produk IT kami. Tawarkan diskon 20% dan ajak untuk konsultasi gratis."
+                                                        : "Halo! 👋\n\nIni pesan broadcast dari kami.\n\nTerima kasih!"}
                                                     rows={8}
                                                     className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none transition-all duration-200 text-gray-800 text-sm resize-none"
                                                 />
                                                 <div className="mt-2 text-xs text-gray-500">
-                                                    💡 Tips: Gunakan emoji dan multi-line untuk pesan lebih menarik
+                                                    {useAI
+                                                        ? '🤖 AI akan generate pesan unik untuk setiap nomor berdasarkan instruksi Anda'
+                                                        : '💡 Tips: Gunakan emoji dan multi-line untuk pesan lebih menarik'}
                                                 </div>
                                             </div>
+
+                                            {/* AI Features - Show for both CSV and manual input */}
+                                            <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-4 mb-4 border-2 border-blue-200">
+                                                <div className="flex items-center gap-3 mb-4">
+                                                    <span className="text-2xl">🤖</span>
+                                                    <h4 className="text-lg font-bold text-blue-700">AI Gemini Features</h4>
+                                                </div>
+
+                                                {/* AI Toggle */}
+                                                <div className="bg-white rounded-lg p-3 mb-3">
+                                                    <label className="flex items-center gap-3 cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={useAI}
+                                                            onChange={(e) => setUseAI(e.target.checked)}
+                                                            className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <span className="font-semibold text-gray-700">
+                                                            Gunakan AI untuk Generate Pesan Personal
+                                                        </span>
+                                                    </label>
+                                                    {senderCsvData.length === 0 && (
+                                                        <div className="mt-2 text-xs text-gray-600 ml-8">
+                                                            💡 AI akan generate pesan unik untuk setiap nomor yang Anda input
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {useAI && (
+                                                    <>
+                                                        {/* AI Context */}
+                                                        <div className="bg-white rounded-lg p-3 mb-3">
+                                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                                Konteks Tambahan (Opsional)
+                                                            </label>
+                                                            <textarea
+                                                                value={aiContext}
+                                                                onChange={(e) => setAiContext(e.target.value)}
+                                                                placeholder="Contoh: Kami adalah perusahaan IT yang menawarkan jasa pembuatan website dan aplikasi mobile..."
+                                                                rows={3}
+                                                                className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:border-blue-500 outline-none text-sm"
+                                                            />
+                                                        </div>
+
+                                                        {/* Generate AI Button */}
+                                                        <button
+                                                            onClick={handleGenerateAIMessages}
+                                                            disabled={isGeneratingAI || !senderMessage.trim()}
+                                                            className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-bold rounded-lg hover:from-blue-700 hover:to-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2 mb-3"
+                                                        >
+                                                            {isGeneratingAI ? (
+                                                                <>
+                                                                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                                    </svg>
+                                                                    Generating...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    🤖 Generate Pesan AI
+                                                                </>
+                                                            )}
+                                                        </button>
+
+                                                        {/* Auto Responder */}
+                                                        <div className="bg-white rounded-lg p-3">
+                                                            <label className="flex items-center gap-3 cursor-pointer mb-3">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={autoResponderEnabled}
+                                                                    onChange={(e) => setAutoResponderEnabled(e.target.checked)}
+                                                                    className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                                                />
+                                                                <span className="font-semibold text-gray-700">
+                                                                    Aktifkan Auto Responder AI
+                                                                </span>
+                                                            </label>
+                                                            {autoResponderEnabled && (
+                                                                <textarea
+                                                                    value={autoResponderPrompt}
+                                                                    onChange={(e) => setAutoResponderPrompt(e.target.value)}
+                                                                    placeholder="Instruksi untuk AI responder..."
+                                                                    rows={3}
+                                                                    className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:border-blue-500 outline-none text-sm"
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+
+                                            {/* AI Generated Messages Preview */}
+                                            {aiGeneratedMessages.length > 0 && (
+                                                <div className="bg-white rounded-lg p-4 mb-4 border-2 border-green-200">
+                                                    <h4 className="text-sm font-bold text-green-700 mb-3">
+                                                        ✅ Pesan AI Berhasil Digenerate ({aiGeneratedMessages.length})
+                                                    </h4>
+                                                    <div className="max-h-60 overflow-y-auto space-y-2">
+                                                        {aiGeneratedMessages.slice(0, 3).map((msg, idx) => (
+                                                            <div key={idx} className="bg-gray-50 rounded p-3 text-xs">
+                                                                <div className="font-semibold text-gray-700 mb-1">
+                                                                    {msg.phone} - {msg.name || 'No name'}
+                                                                </div>
+                                                                <div className="text-gray-600 whitespace-pre-wrap">
+                                                                    {msg.generated_message?.substring(0, 150)}...
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                        {aiGeneratedMessages.length > 3 && (
+                                                            <div className="text-xs text-gray-500 text-center">
+                                                                ... dan {aiGeneratedMessages.length - 3} pesan lainnya
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
 
                                             {/* Delay Settings */}
                                             <div className="bg-white rounded-lg p-4 mb-4 border border-purple-200">
@@ -1566,30 +1865,53 @@ function App() {
                                             </div>
 
                                             {/* Send Button */}
-                                            <button
-                                                onClick={handleSendBulkMessages}
-                                                disabled={isSending || (senderCsvData.length === 0 && !senderPhoneNumbers.trim()) || !senderMessage.trim()}
-                                                className="w-full px-8 py-5 bg-gradient-to-r from-green-600 to-emerald-600 text-white text-xl font-bold rounded-xl hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200 shadow-2xl flex items-center justify-center gap-3"
-                                            >
-                                                {isSending ? (
-                                                    <>
-                                                        <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
-                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                        </svg>
-                                                        Mengirim Pesan...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                                                        </svg>
-                                                        {senderCsvData.length > 0
-                                                            ? `Kirim ke ${senderCsvData.length} Nomor`
-                                                            : 'Kirim Pesan Sekarang'}
-                                                    </>
-                                                )}
-                                            </button>
+                                            {/* Send Button */}
+                                            {aiGeneratedMessages.length > 0 ? (
+                                                <button
+                                                    onClick={handleSendAIMessages}
+                                                    disabled={isSending}
+                                                    className="w-full px-8 py-5 bg-gradient-to-r from-blue-600 to-cyan-600 text-white text-xl font-bold rounded-xl hover:from-blue-700 hover:to-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200 shadow-2xl flex items-center justify-center gap-3"
+                                                >
+                                                    {isSending ? (
+                                                        <>
+                                                            <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                            </svg>
+                                                            Mengirim Pesan AI...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            🤖 Kirim Pesan AI ({aiGeneratedMessages.length} nomor)
+                                                        </>
+                                                    )}
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={handleSendBulkMessages}
+                                                    disabled={isSending || (senderCsvData.length === 0 && !senderPhoneNumbers.trim()) || !senderMessage.trim()}
+                                                    className="w-full px-8 py-5 bg-gradient-to-r from-green-600 to-emerald-600 text-white text-xl font-bold rounded-xl hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200 shadow-2xl flex items-center justify-center gap-3"
+                                                >
+                                                    {isSending ? (
+                                                        <>
+                                                            <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+                                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                            </svg>
+                                                            Mengirim Pesan...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                                            </svg>
+                                                            {senderCsvData.length > 0
+                                                                ? `Kirim ke ${senderCsvData.length} Nomor`
+                                                                : 'Kirim Pesan Sekarang'}
+                                                        </>
+                                                    )}
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -1668,7 +1990,7 @@ function App() {
                             )}
                         </div>
                     )}
-                </div>
+                </div >
             </div >
         </>
     )

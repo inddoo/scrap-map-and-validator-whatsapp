@@ -70,3 +70,43 @@ class WASendResponse(BaseModel):
     results: List[Dict]
     summary: Dict
 
+
+
+class AIGenerateMessageRequest(BaseModel):
+    """Request schema for AI message generation"""
+    template: str  # Template or instruction for message
+    csv_data: List[Dict]  # CSV data rows
+    context: Optional[str] = None  # Additional context
+
+
+class AIGenerateMessageResponse(BaseModel):
+    """Response schema for AI message generation"""
+    success: bool
+    messages: List[Dict]  # [{'phone': '628xxx', 'name': 'John', 'message': '...'}]
+
+
+class AIAutoResponderRequest(BaseModel):
+    """Request schema for AI auto responder"""
+    incoming_message: str
+    sender_phone: str
+    sender_data: Dict  # Data from CSV
+    response_prompt: str  # Instructions for response
+    conversation_history: Optional[List[Dict]] = None
+
+
+class AIAutoResponderResponse(BaseModel):
+    """Response schema for AI auto responder"""
+    success: bool
+    response_message: str
+
+
+class WASendAIPersonalizedRequest(BaseModel):
+    """Request schema for sending AI-generated personalized messages"""
+    csv_data: List[Dict]  # Full CSV data with phone and other fields
+    message_template: str  # Template or AI instruction
+    use_ai: bool = True  # Whether to use AI generation
+    context: Optional[str] = None  # Additional context for AI
+    min_delay: Optional[int] = 5
+    max_delay: Optional[int] = 10
+    auto_responder_enabled: Optional[bool] = False
+    auto_responder_prompt: Optional[str] = None

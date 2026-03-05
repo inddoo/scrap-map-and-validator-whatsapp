@@ -27,13 +27,23 @@
 - **CSV Preview & Edit** - Preview uploaded CSV and remove unnecessary columns
 - **Export Results** - Download validation results as CSV
 
-### 📨 WhatsApp Auto Sender (NEW!)
+### 📨 WhatsApp Auto Sender
 - **Single Message** - Send message to one number
 - **Bulk Messages** - Send same message to multiple numbers
 - **Personalized Messages** - Send customized messages using templates
+- **CSV Upload** - Upload CSV and send to all contacts
 - **Anti-Spam Delay** - Random delay between messages to avoid detection
 - **Delivery Status** - Track which messages were sent successfully
 - **Smart Retry** - Option to stop or continue on errors
+
+### 🤖 AI Features (Gemini Integration)
+- **AI Message Generation** - Generate personalized messages for each contact using AI
+- **Smart Personalization** - AI creates unique messages based on CSV data (name, company, etc.)
+- **Manual Input Support** - Generate AI messages without CSV, just input phone numbers
+- **Auto Responder** - Automatically reply to incoming messages with AI
+- **Context-Aware** - AI understands conversation history and responds appropriately
+- **Customizable Prompts** - Define how AI should respond (sales, support, booking, etc.)
+- **Multi-Language** - AI can generate messages in any language
 
 ## 🚀 Quick Start
 
@@ -57,7 +67,18 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-3. **Install frontend dependencies**
+3. **Setup environment variables**
+```bash
+# Copy .env.example to .env
+cp .env.example .env
+
+# Edit .env and add your API keys:
+# GEMINI_API_KEY=your_gemini_api_key_here (for AI features)
+```
+
+Get Gemini API key: https://makersuite.google.com/app/apikey
+
+4. **Install frontend dependencies**
 ```bash
 cd ..
 npm install
@@ -195,6 +216,13 @@ export const API_BASE_URL = 'http://localhost:8000'
 - `POST /wa/send-bulk` - Send bulk messages (same message to all)
 - `POST /wa/send-personalized` - Send personalized messages (template)
 
+### AI Features (Gemini)
+- `POST /ai/generate-messages` - Generate personalized messages using AI
+- `POST /ai/auto-responder` - Generate auto response for incoming message
+- `POST /wa/send-ai-personalized` - Send AI-generated messages with auto-responder
+
+**See [AI_FEATURES_GUIDE.md](backend/AI_FEATURES_GUIDE.md) for detailed AI documentation**
+
 ## 🛡️ How WhatsApp Validation Works
 
 ### Primary Method: Store.QueryExist
@@ -277,6 +305,31 @@ kill_chrome.bat
 - Don't logout from WhatsApp Web during validation
 - Session persists - no need to scan QR repeatedly
 
+### For AI Features
+- Get Gemini API key from https://makersuite.google.com/app/apikey
+- Free tier: 60 requests/minute, 1,500 requests/day
+- Test with small batches first (5-10 contacts)
+- Review AI-generated messages before sending
+- Set appropriate delay (5-10 seconds minimum)
+- Don't send spam or unwanted messages
+
+## 📚 Documentation
+
+### Quick Start
+- [AI Quick Start Guide](AI_QUICK_START.md) - Setup AI in 5 minutes
+- [AI Manual Input Guide](AI_MANUAL_INPUT_GUIDE.md) - Use AI without CSV
+- [Example AI Usage](EXAMPLE_AI_USAGE.md) - Real-world scenarios
+
+### Detailed Guides
+- [AI Features Guide](backend/AI_FEATURES_GUIDE.md) - Complete AI documentation
+- [Testing AI Features](TESTING_AI_FEATURES.md) - Testing guide
+- [Auto Sender Guide](backend/wa_validator/AUTO_SENDER_GUIDE.md) - WhatsApp sender docs
+
+### Setup Scripts
+- `setup_ai.sh` (Linux/Mac) - Automated AI setup
+- `setup_ai.bat` (Windows) - Automated AI setup
+- `backend/test_ai_integration.py` - Test AI integration
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
@@ -309,6 +362,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Playwright](https://playwright.dev/) - Browser automation library
 - [Selenium](https://www.selenium.dev/) - Web automation framework
 - [TailwindCSS](https://tailwindcss.com/) - Utility-first CSS framework
+- [Google Gemini](https://ai.google.dev/) - AI model for message generation
 
 ## 📧 Support
 

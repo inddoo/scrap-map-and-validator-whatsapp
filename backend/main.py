@@ -17,14 +17,20 @@ from api.routes import (
     close_wa_checker_handler,
     send_wa_message_handler,
     send_wa_bulk_handler,
-    send_wa_personalized_handler
+    send_wa_personalized_handler,
+    ai_generate_messages_handler,
+    ai_auto_responder_handler,
+    send_wa_ai_personalized_handler
 )
 from api.schemas import (
     ScrapeRequest, 
     WAValidationRequest,
     WASendMessageRequest,
     WASendBulkRequest,
-    WASendPersonalizedRequest
+    WASendPersonalizedRequest,
+    AIGenerateMessageRequest,
+    AIAutoResponderRequest,
+    WASendAIPersonalizedRequest
 )
 
 # Initialize FastAPI app
@@ -53,7 +59,8 @@ def read_root():
         "endpoints": {
             "scraper": ["/scrape", "/progress", "/stop-scraping", "/export-csv"],
             "wa_validator": ["/wa/init", "/wa/validate", "/wa/validate-csv", "/wa/export", "/wa/close"],
-            "wa_sender": ["/wa/send", "/wa/send-bulk", "/wa/send-personalized"]
+            "wa_sender": ["/wa/send", "/wa/send-bulk", "/wa/send-personalized"],
+            "ai": ["/ai/generate-messages", "/ai/auto-responder", "/wa/send-ai-personalized"]
         }
     }
 
@@ -140,3 +147,26 @@ async def send_wa_bulk(request: WASendBulkRequest):
 async def send_wa_personalized(request: WASendPersonalizedRequest):
     """Send personalized WhatsApp messages"""
     return await send_wa_personalized_handler(request)
+
+
+
+# ============================================================
+# AI GEMINI ENDPOINTS
+# ============================================================
+
+@app.post("/ai/generate-messages")
+async def ai_generate_messages(request: AIGenerateMessageRequest):
+    """Generate personalized messages using AI"""
+    return await ai_generate_messages_handler(request)
+
+
+@app.post("/ai/auto-responder")
+async def ai_auto_responder(request: AIAutoResponderRequest):
+    """Generate auto response using AI"""
+    return await ai_auto_responder_handler(request)
+
+
+@app.post("/wa/send-ai-personalized")
+async def send_wa_ai_personalized(request: WASendAIPersonalizedRequest):
+    """Send AI-generated personalized messages with auto-responder"""
+    return await send_wa_ai_personalized_handler(request)
