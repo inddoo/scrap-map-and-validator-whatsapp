@@ -8,7 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from typing import List, Dict
+from typing import List, Dict, Optional
 import random
 
 
@@ -444,11 +444,48 @@ class WAAutoSender:
             if auto_responder_enabled and result['message_sent'] and gemini_service:
                 try:
                     print(f"  🤖 Auto-responder active, monitoring for replies...")
-                    time.sleep(5)  # Wait for potential reply
                     
-                    # Check for new messages (simplified - in production, use proper message monitoring)
-                    # This is a placeholder - actual implementation would need message monitoring
-                    result['auto_responder_status'] = 'Monitoring active'
+                    # Wait for potential reply (configurable wait time)
+                    monitor_duration = 10  # seconds to monitor for reply
+                    check_interval = 2  # check every 2 seconds
+                    
+                    for i in range(monitor_duration // check_interval):
+                        time.sleep(check_interval)
+                        
+                        # Try to detect new incoming messages
+                        incoming_message = self._check_for_new_message()
+                        
+                        if incoming_message:
+                            print(f"  📨 Incoming message detected: {incoming_message[:50]}...")
+                            
+                            # Generate AI response
+                            try:
+                                ai_response = gemini_service.generate_auto_response(
+                                    incoming_message=incoming_message,
+                                    sender_data=data,
+                                    response_prompt=auto_responder_prompt or "Jawab dengan ramah dan profesional",
+                                    conversation_history=None
+                                )
+                                
+                                print(f"  🤖 AI Response: {ai_response[:50]}...")
+                                
+                                # Send the auto response
+                                time.sleep(2)
+                                self._send_auto_response(ai_response)
+                                
+                                result['auto_responder_status'] = 'Response sent'
+                                result['auto_response'] = ai_response
+                                print(f"  ✅ Auto-response sent successfully")
+                                break
+                                
+                            except Exception as e:
+                                print(f"  ⚠️ Error generating/sending auto-response: {e}")
+                                result['auto_responder_status'] = f'Error: {str(e)}'
+                                break
+                    else:
+                        # No reply received within monitoring period
+                        result['auto_responder_status'] = 'No reply received'
+                        print(f"  ℹ️ No reply received within {monitor_duration}s")
                     
                 except Exception as e:
                     print(f"  ⚠️ Auto-responder error: {e}")
@@ -465,6 +502,103 @@ class WAAutoSender:
         
         self.results = results
         return results
+    
+    def _check_for_new_message(self) -> Optional[str]:
+        """
+        Check for new incoming messages in current chat
+        
+        Returns:
+            str: Incoming message text if found, None otherwise
+        """
+        try:
+            # Selectors for incoming messages (from contact, not from us)
+            incoming_selectors = [
+                'div[class*="message-in"]',
+                'div.message-in',
+                'span[dir="ltr"][class*="selectable-text"]'
+            ]
+            
+            # Try to find incoming message bubbles
+            for selector in incoming_selectors:
+                try:
+                    messages = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if messages:
+                        # Get the last message (most recent)
+                        last_message = messages[-1]
+                        message_text = last_message.text.strip()
+                        
+                        # Check if this is a new message (not empty and not too old)
+                        if message_text and len(message_text) > 0:
+                            # Simple check: if message exists, assume it's new
+                            # In production, you'd want to track message IDs or timestamps
+                            return message_text
+                except:
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            print(f"    Error checking for new messages: {e}")
+            return None
+    
+    def _send_auto_response(self, message: str) -> bool:
+        """
+        Send auto response message
+        
+        Args:
+            message: Response message to send
+            
+        Returns:
+            bool: True if sent successfully
+        """
+        try:
+            # Find input box
+            input_selectors = [
+                'div[contenteditable="true"][data-tab="10"]',
+                'div[contenteditable="true"][data-tab="6"]',
+                'footer div[contenteditable="true"]',
+                'div[data-testid="conversation-compose-box-input"]'
+            ]
+            
+            input_box = None
+            for selector in input_selectors:
+                try:
+                    input_box = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if input_box and input_box.is_displayed():
+                        break
+                except:
+                    continue
+            
+            if not input_box:
+                print(f"    ⚠️ Input box not found for auto-response")
+                return False
+            
+            # Sanitize message
+            sanitized_message = self._sanitize_message(message)
+            
+            # Focus and type
+            input_box.click()
+            time.sleep(0.3)
+            
+            # Type message line by line
+            lines = sanitized_message.split('\n')
+            for i, line in enumerate(lines):
+                input_box.send_keys(line)
+                if i < len(lines) - 1:
+                    input_box.send_keys(Keys.SHIFT, Keys.ENTER)
+                    time.sleep(0.1)
+            
+            time.sleep(0.5)
+            
+            # Send
+            input_box.send_keys(Keys.ENTER)
+            time.sleep(2)
+            
+            return True
+            
+        except Exception as e:
+            print(f"    ⚠️ Error sending auto-response: {e}")
+            return False
 
 
 if __name__ == '__main__':

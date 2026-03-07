@@ -601,33 +601,53 @@ async def ai_generate_messages_handler(request):
         AIGenerateMessageResponse: Generated messages for each contact
     """
     try:
-        from ai import get_gemini_service
+        from ai import get_ai_service
         
-        gemini = get_gemini_service()
+        print(f"\n{'='*60}")
+        print(f"AI GENERATE MESSAGES REQUEST")
+        print(f"{'='*60}")
+        print(f"Template: {request.template[:50]}...")
+        print(f"Context: {request.context}")
+        print(f"CSV Data count: {len(request.csv_data)}")
+        print(f"CSV Data: {request.csv_data}")
+        print(f"{'='*60}\n")
+        
+        ai_service = get_ai_service()
+        print(f"Using AI service: {ai_service.__class__.__name__}")
         messages = []
         
         print(f"Generating AI messages for {len(request.csv_data)} contacts")
         
-        for row in request.csv_data:
+        for idx, row in enumerate(request.csv_data):
             try:
+                print(f"\n[{idx+1}/{len(request.csv_data)}] Processing: {row}")
+                
                 # Generate personalized message
-                message = gemini.generate_personalized_message(
+                message = ai_service.generate_personalized_message(
                     template=request.template,
                     data=row,
                     context=request.context
                 )
                 
+                print(f"  Generated message: {message[:100]}...")
+                
                 messages.append({
                     **row,
                     'generated_message': message
                 })
+                print(f"  ✓ Generated for {row.get('name', row.get('phone', 'unknown'))}")
                 
             except Exception as e:
-                print(f"Error generating message for {row.get('phone', 'unknown')}: {e}")
+                print(f"  ✗ Error generating message for {row.get('phone', 'unknown')}: {e}")
+                import traceback
+                traceback.print_exc()
                 messages.append({
                     **row,
                     'generated_message': f"Error: {str(e)}"
                 })
+        
+        print(f"\n✅ Successfully generated {len(messages)} messages")
+        print(f"Messages: {messages}\n")
         
         return {
             "success": True,
@@ -638,7 +658,11 @@ async def ai_generate_messages_handler(request):
         print(f"Error in AI message generation: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": False,
+            "error": str(e),
+            "messages": []
+        }
 
 
 async def ai_auto_responder_handler(request):
@@ -652,13 +676,13 @@ async def ai_auto_responder_handler(request):
         AIAutoResponderResponse: Generated response message
     """
     try:
-        from ai import get_gemini_service
+        from ai import get_ai_service
         
-        gemini = get_gemini_service()
+        ai_service = get_ai_service()
         
         print(f"Generating AI response for message: {request.incoming_message[:50]}...")
         
-        response_message = gemini.generate_auto_response(
+        response_message = ai_service.generate_auto_response(
             incoming_message=request.incoming_message,
             sender_data=request.sender_data,
             response_prompt=request.response_prompt,
@@ -701,8 +725,8 @@ async def send_wa_ai_personalized_handler(request):
             from wa_validator.wa_sender import WAAutoSender
             wa_sender = WAAutoSender(wa_checker.driver)
         
-        from ai import get_gemini_service
-        gemini = get_gemini_service()
+        from ai import get_ai_service
+        ai_service = get_ai_service()
         
         print(f"Sending AI-personalized messages to {len(request.csv_data)} contacts")
         
@@ -747,7 +771,7 @@ async def send_wa_ai_personalized_handler(request):
             request.max_delay,
             request.auto_responder_enabled,
             request.auto_responder_prompt,
-            gemini if request.auto_responder_enabled else None
+            ai_service if request.auto_responder_enabled else None
         )
         
         summary = wa_sender.get_summary()
@@ -765,3 +789,161 @@ async def send_wa_ai_personalized_handler(request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+async def auto_responder_start_handler(request):
+    """Start persistent auto responder service"""
+    try:
+        from core.auto_responder_service import get_auto_responder_service
+        from ai import get_ai_service
+        
+        # Get WA checker instance (has driver)
+        global wa_checker, wa_sender
+        
+        if not wa_checker or not wa_checker.driver:
+            return {
+                "success": False,
+                "error": "WhatsApp not initialized. Please initialize WhatsApp first."
+            }
+        
+        # Initialize wa_sender if not exists
+        if wa_sender is None:
+            from wa_validator.wa_sender import WAAutoSender
+            wa_sender = WAAutoSender(wa_checker.driver)
+        
+        # Get AI service
+        ai_service = get_ai_service()
+        
+        # Get or create auto responder service
+        auto_responder = get_auto_responder_service(wa_checker.driver, ai_service)
+        
+        if not auto_responder:
+            return {
+                "success": False,
+                "error": "Failed to create auto responder service"
+            }
+        
+        # Start service
+        success = auto_responder.start(
+            response_prompt=request.response_prompt,
+            check_interval=request.check_interval
+        )
+        
+        if success:
+            status = auto_responder.get_status()
+            return {
+                "success": True,
+                "message": "Auto responder started successfully",
+                **status
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Auto responder already running"
+            }
+        
+    except Exception as e:
+        print(f"Error starting auto responder: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+async def auto_responder_stop_handler():
+    """Stop persistent auto responder service"""
+    try:
+        from core.auto_responder_service import get_auto_responder_service
+        
+        auto_responder = get_auto_responder_service()
+        
+        if not auto_responder:
+            return {
+                "success": False,
+                "error": "Auto responder service not found"
+            }
+        
+        success = auto_responder.stop()
+        
+        if success:
+            return {
+                "success": True,
+                "message": "Auto responder stopped successfully",
+                "is_running": False
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Auto responder not running"
+            }
+        
+    except Exception as e:
+        print(f"Error stopping auto responder: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+async def auto_responder_status_handler():
+    """Get auto responder status"""
+    try:
+        from core.auto_responder_service import get_auto_responder_service
+        
+        auto_responder = get_auto_responder_service()
+        
+        if not auto_responder:
+            return {
+                "success": True,
+                "is_running": False,
+                "message": "Auto responder not initialized"
+            }
+        
+        status = auto_responder.get_status()
+        
+        return {
+            "success": True,
+            **status
+        }
+        
+    except Exception as e:
+        print(f"Error getting auto responder status: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "is_running": False
+        }
+
+
+async def auto_responder_update_prompt_handler(request):
+    """Update auto responder prompt while running"""
+    try:
+        from core.auto_responder_service import get_auto_responder_service
+        
+        auto_responder = get_auto_responder_service()
+        
+        if not auto_responder:
+            return {
+                "success": False,
+                "error": "Auto responder service not found"
+            }
+        
+        auto_responder.update_prompt(request.response_prompt)
+        
+        return {
+            "success": True,
+            "message": "Prompt updated successfully",
+            "response_prompt": request.response_prompt
+        }
+        
+    except Exception as e:
+        print(f"Error updating auto responder prompt: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

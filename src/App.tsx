@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface MapResult {
     name: string
@@ -101,7 +101,7 @@ function App() {
     const [progress, setProgress] = useState({ current: 0, total: 0, message: '', current_place: '' })
 
     // WA Validation state
-    const [activeTab, setActiveTab] = useState<'scraper' | 'wa-validator' | 'wa-sender'>('scraper')
+    const [activeTab, setActiveTab] = useState<'scraper' | 'wa-validator' | 'wa-sender' | 'auto-responder'>('scraper')
     const [waInitialized, setWaInitialized] = useState(false)
     const [waInitializing, setWaInitializing] = useState(false)
     const [waValidating, setWaValidating] = useState(false)
@@ -133,7 +133,13 @@ function App() {
     const [isGeneratingAI, setIsGeneratingAI] = useState(false)
     const [autoResponderEnabled, setAutoResponderEnabled] = useState(false)
     const [autoResponderPrompt, setAutoResponderPrompt] = useState('Anda adalah customer service yang ramah dan profesional. Jawab pertanyaan pelanggan dengan sopan dan informatif.')
-    const [geminiApiKey, setGeminiApiKey] = useState('')
+    const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set())
+
+    // Persistent Auto Responder state
+    const [persistentAutoResponderRunning, setPersistentAutoResponderRunning] = useState(false)
+    const [persistentAutoResponderPrompt, setPersistentAutoResponderPrompt] = useState('Anda adalah customer service yang ramah dan profesional. Jawab pertanyaan pelanggan dengan sopan dan informatif.')
+    const [autoResponderStats, setAutoResponderStats] = useState<any>(null)
+    const [isCheckingStatus, setIsCheckingStatus] = useState(false)
 
     // Modal state
     const [modal, setModal] = useState<{
@@ -830,7 +836,12 @@ function App() {
             }
 
             const data = await response.json()
-            setAiGeneratedMessages(data.messages)
+
+            console.log('AI Response:', data)
+            console.log('Messages count:', data.messages?.length)
+            console.log('Messages:', data.messages)
+
+            setAiGeneratedMessages(data.messages || [])
 
             // If manual input, also update senderFullCsvData for sending
             if (!hasCSV) {
@@ -839,7 +850,7 @@ function App() {
 
             showModal(
                 '🤖 AI Berhasil Generate Pesan!',
-                `Berhasil generate ${data.messages.length} pesan personal!\n\nSilakan review pesan dan klik "Kirim Pesan AI".`,
+                `Berhasil generate ${data.messages?.length || 0} pesan personal!\n\nSilakan review pesan dan klik "Kirim Pesan AI".`,
                 'success'
             )
         } catch (error) {
@@ -849,6 +860,119 @@ function App() {
             setIsGeneratingAI(false)
         }
     }
+
+    // Persistent Auto Responder Functions
+    const checkAutoResponderStatus = async () => {
+        try {
+            const response = await fetch('http://localhost:8000/auto-responder/status')
+            const data = await response.json()
+
+            if (data.success) {
+                setPersistentAutoResponderRunning(data.is_running)
+                setAutoResponderStats(data)
+            }
+        } catch (error) {
+            console.error('Error checking auto responder status:', error)
+        }
+    }
+
+    const handleStartPersistentAutoResponder = async () => {
+        if (!waInitialized) {
+            showModal('WhatsApp Belum Siap', 'Silakan inisialisasi WhatsApp checker terlebih dahulu!', 'warning')
+            return
+        }
+
+        setIsCheckingStatus(true)
+        try {
+            const response = await fetch('http://localhost:8000/auto-responder/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    response_prompt: persistentAutoResponderPrompt
+                })
+            })
+
+            const data = await response.json()
+
+            if (data.success) {
+                setPersistentAutoResponderRunning(true)
+                setAutoResponderStats(data)
+                showModal('Auto Responder Started', '✅ Auto responder sekarang berjalan di background!\n\nBot akan otomatis membalas semua pesan masuk.', 'success')
+            } else {
+                showModal('Error', data.error || 'Gagal start auto responder', 'error')
+            }
+        } catch (error) {
+            console.error('Error starting auto responder:', error)
+            showModal('Error', 'Gagal start auto responder.\n\nPastikan backend berjalan.', 'error')
+        } finally {
+            setIsCheckingStatus(false)
+        }
+    }
+
+    const handleStopPersistentAutoResponder = async () => {
+        setIsCheckingStatus(true)
+        try {
+            const response = await fetch('http://localhost:8000/auto-responder/stop', {
+                method: 'POST'
+            })
+
+            const data = await response.json()
+
+            if (data.success) {
+                setPersistentAutoResponderRunning(false)
+                setAutoResponderStats(null)
+                showModal('Auto Responder Stopped', '⏹️ Auto responder telah dihentikan.', 'info')
+            } else {
+                showModal('Error', data.error || 'Gagal stop auto responder', 'error')
+            }
+        } catch (error) {
+            console.error('Error stopping auto responder:', error)
+            showModal('Error', 'Gagal stop auto responder.', 'error')
+        } finally {
+            setIsCheckingStatus(false)
+        }
+    }
+
+    const handleUpdateAutoResponderPrompt = async () => {
+        if (!persistentAutoResponderRunning) {
+            showModal('Auto Responder Tidak Aktif', 'Start auto responder terlebih dahulu!', 'warning')
+            return
+        }
+
+        try {
+            const response = await fetch('http://localhost:8000/auto-responder/update-prompt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    response_prompt: persistentAutoResponderPrompt
+                })
+            })
+
+            const data = await response.json()
+
+            if (data.success) {
+                showModal('Prompt Updated', '✅ Prompt auto responder berhasil diupdate!', 'success')
+            } else {
+                showModal('Error', data.error || 'Gagal update prompt', 'error')
+            }
+        } catch (error) {
+            console.error('Error updating prompt:', error)
+            showModal('Error', 'Gagal update prompt.', 'error')
+        }
+    }
+
+    // Check status on mount and periodically
+    useEffect(() => {
+        checkAutoResponderStatus()
+
+        const interval = setInterval(() => {
+            if (persistentAutoResponderRunning) {
+                checkAutoResponderStatus()
+            }
+        }, 5000) // Check every 5 seconds
+
+        return () => clearInterval(interval)
+    }, [persistentAutoResponderRunning])
 
     const handleSendAIMessages = async () => {
         if (!waInitialized) {
@@ -948,6 +1072,15 @@ function App() {
                                 }`}
                         >
                             📨 WA Auto Sender
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('auto-responder')}
+                            className={`px-8 py-4 font-bold rounded-xl transition-all duration-200 ${activeTab === 'auto-responder'
+                                ? 'bg-white text-purple-700 shadow-xl scale-105'
+                                : 'bg-white/20 text-white hover:bg-white/30'
+                                }`}
+                        >
+                            🤖 Auto Responder
                         </button>
                     </div>
 
@@ -1810,22 +1943,47 @@ function App() {
                                                     <h4 className="text-sm font-bold text-green-700 mb-3">
                                                         ✅ Pesan AI Berhasil Digenerate ({aiGeneratedMessages.length})
                                                     </h4>
-                                                    <div className="max-h-60 overflow-y-auto space-y-2">
-                                                        {aiGeneratedMessages.slice(0, 3).map((msg, idx) => (
-                                                            <div key={idx} className="bg-gray-50 rounded p-3 text-xs">
-                                                                <div className="font-semibold text-gray-700 mb-1">
-                                                                    {msg.phone} - {msg.name || 'No name'}
+                                                    <div className="max-h-96 overflow-y-auto space-y-3">
+                                                        {aiGeneratedMessages.map((msg, idx) => {
+                                                            const isExpanded = expandedMessages.has(idx)
+                                                            const messageText = msg.generated_message || ''
+                                                            const shouldTruncate = messageText.length > 200
+
+                                                            return (
+                                                                <div key={idx} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                                                                    <div className="flex items-center justify-between mb-2">
+                                                                        <div className="font-semibold text-gray-700">
+                                                                            📱 {msg.phone}
+                                                                        </div>
+                                                                        <div className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                                                            {msg.name || 'No name'}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="text-gray-600 text-sm whitespace-pre-wrap leading-relaxed">
+                                                                        {isExpanded || !shouldTruncate
+                                                                            ? messageText
+                                                                            : `${messageText.substring(0, 200)}...`
+                                                                        }
+                                                                    </div>
+                                                                    {shouldTruncate && (
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const newExpanded = new Set(expandedMessages)
+                                                                                if (isExpanded) {
+                                                                                    newExpanded.delete(idx)
+                                                                                } else {
+                                                                                    newExpanded.add(idx)
+                                                                                }
+                                                                                setExpandedMessages(newExpanded)
+                                                                            }}
+                                                                            className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-semibold"
+                                                                        >
+                                                                            {isExpanded ? '▲ Sembunyikan' : '▼ Baca Selengkapnya'}
+                                                                        </button>
+                                                                    )}
                                                                 </div>
-                                                                <div className="text-gray-600 whitespace-pre-wrap">
-                                                                    {msg.generated_message?.substring(0, 150)}...
-                                                                </div>
-                                                            </div>
-                                                        ))}
-                                                        {aiGeneratedMessages.length > 3 && (
-                                                            <div className="text-xs text-gray-500 text-center">
-                                                                ... dan {aiGeneratedMessages.length - 3} pesan lainnya
-                                                            </div>
-                                                        )}
+                                                            )
+                                                        })}
                                                     </div>
                                                 </div>
                                             )}
@@ -1988,6 +2146,220 @@ function App() {
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Auto Responder Tab */}
+                    {activeTab === 'auto-responder' && (
+                        <div className="animate-fade-in">
+                            {/* Auto Responder Control Panel */}
+                            <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8 mb-6">
+                                <div className="text-center mb-6">
+                                    <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600 mb-2">
+                                        🤖 Persistent Auto Responder
+                                    </h2>
+                                    <p className="text-gray-600">
+                                        Bot yang berjalan 24/7 untuk membalas pesan masuk secara otomatis menggunakan AI
+                                    </p>
+                                </div>
+
+                                {/* Status Card */}
+                                <div className={`rounded-xl p-6 mb-6 border-2 ${persistentAutoResponderRunning
+                                    ? 'bg-gradient-to-br from-green-50 to-emerald-50 border-green-300'
+                                    : 'bg-gradient-to-br from-gray-50 to-slate-50 border-gray-300'
+                                    }`}>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-4 h-4 rounded-full ${persistentAutoResponderRunning
+                                                ? 'bg-green-500 animate-pulse'
+                                                : 'bg-gray-400'
+                                                }`}></div>
+                                            <span className="text-lg font-bold text-gray-700">
+                                                Status: {persistentAutoResponderRunning ? '🟢 RUNNING' : '⚫ STOPPED'}
+                                            </span>
+                                        </div>
+                                        <button
+                                            onClick={checkAutoResponderStatus}
+                                            disabled={isCheckingStatus}
+                                            className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-semibold"
+                                        >
+                                            🔄 Refresh
+                                        </button>
+                                    </div>
+
+                                    {autoResponderStats && persistentAutoResponderRunning && (
+                                        <div className="grid grid-cols-3 gap-4 mt-4">
+                                            <div className="bg-white rounded-lg p-4 text-center">
+                                                <div className="text-2xl font-bold text-blue-600">
+                                                    {autoResponderStats.monitored_chats || 0}
+                                                </div>
+                                                <div className="text-xs text-gray-600 mt-1">Chats Monitored</div>
+                                            </div>
+                                            <div className="bg-white rounded-lg p-4 text-center">
+                                                <div className="text-2xl font-bold text-green-600">
+                                                    {autoResponderStats.total_processed || 0}
+                                                </div>
+                                                <div className="text-xs text-gray-600 mt-1">Messages Processed</div>
+                                            </div>
+                                            <div className="bg-white rounded-lg p-4 text-center">
+                                                <div className="text-2xl font-bold text-purple-600">
+                                                    {autoResponderStats.check_interval || 3}s
+                                                </div>
+                                                <div className="text-xs text-gray-600 mt-1">Check Interval</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Prompt Configuration */}
+                                <div className="bg-white rounded-lg p-6 mb-6 border border-gray-200">
+                                    <label className="block text-sm font-bold text-gray-700 mb-3">
+                                        📝 Response Prompt (Instruksi untuk AI)
+                                    </label>
+                                    <textarea
+                                        value={persistentAutoResponderPrompt}
+                                        onChange={(e) => setPersistentAutoResponderPrompt(e.target.value)}
+                                        placeholder="Contoh: Anda adalah customer service hotel yang ramah. Jawab pertanyaan dengan informatif dan profesional. Tawarkan bantuan lebih lanjut jika diperlukan."
+                                        rows={6}
+                                        className="w-full px-4 py-3 bg-gray-50 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none transition-all duration-200 text-gray-800 text-sm resize-none"
+                                    />
+                                    <div className="mt-2 text-xs text-gray-500">
+                                        💡 Prompt ini akan digunakan AI untuk generate balasan otomatis ke semua pesan masuk
+                                    </div>
+
+                                    {persistentAutoResponderRunning && (
+                                        <button
+                                            onClick={handleUpdateAutoResponderPrompt}
+                                            className="mt-4 w-full px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                                        >
+                                            💾 Update Prompt (Saat Running)
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Control Buttons */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <button
+                                        onClick={handleStartPersistentAutoResponder}
+                                        disabled={persistentAutoResponderRunning || isCheckingStatus || !waInitialized}
+                                        className={`px-6 py-4 font-bold rounded-xl transition-all duration-200 ${persistentAutoResponderRunning || !waInitialized
+                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                            : 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700 shadow-lg hover:shadow-xl'
+                                            }`}
+                                    >
+                                        {isCheckingStatus ? (
+                                            <span className="flex items-center justify-center gap-2">
+                                                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Starting...
+                                            </span>
+                                        ) : (
+                                            '▶️ START Auto Responder'
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={handleStopPersistentAutoResponder}
+                                        disabled={!persistentAutoResponderRunning || isCheckingStatus}
+                                        className={`px-6 py-4 font-bold rounded-xl transition-all duration-200 ${!persistentAutoResponderRunning
+                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                            : 'bg-gradient-to-r from-red-600 to-rose-600 text-white hover:from-red-700 hover:to-rose-700 shadow-lg hover:shadow-xl'
+                                            }`}
+                                    >
+                                        {isCheckingStatus ? (
+                                            <span className="flex items-center justify-center gap-2">
+                                                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Stopping...
+                                            </span>
+                                        ) : (
+                                            '⏹️ STOP Auto Responder'
+                                        )}
+                                    </button>
+                                </div>
+
+                                {!waInitialized && (
+                                    <div className="mt-4 p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
+                                        <p className="text-yellow-800 text-sm font-semibold text-center">
+                                            ⚠️ Silakan inisialisasi WhatsApp terlebih dahulu di tab "WA Validator"
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* How It Works */}
+                            <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8">
+                                <h3 className="text-2xl font-bold text-gray-800 mb-4">📖 Cara Kerja</h3>
+                                <div className="space-y-4">
+                                    <div className="flex gap-4">
+                                        <div className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold">
+                                            1
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 mb-1">Monitor Chats</h4>
+                                            <p className="text-gray-600 text-sm">
+                                                Bot akan terus monitor semua chat dengan unread messages setiap 3 detik
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="flex-shrink-0 w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center font-bold">
+                                            2
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 mb-1">Detect Messages</h4>
+                                            <p className="text-gray-600 text-sm">
+                                                Ketika ada pesan masuk baru, bot akan detect dan baca isi pesannya
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="flex-shrink-0 w-8 h-8 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center font-bold">
+                                            3
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 mb-1">Generate Response</h4>
+                                            <p className="text-gray-600 text-sm">
+                                                AI (Gemini) akan generate balasan yang sesuai berdasarkan prompt Anda
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="flex-shrink-0 w-8 h-8 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center font-bold">
+                                            4
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 mb-1">Send Auto Reply</h4>
+                                            <p className="text-gray-600 text-sm">
+                                                Bot akan otomatis kirim balasan ke contact tersebut
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="flex-shrink-0 w-8 h-8 bg-cyan-100 text-cyan-600 rounded-full flex items-center justify-center font-bold">
+                                            5
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 mb-1">Repeat 24/7</h4>
+                                            <p className="text-gray-600 text-sm">
+                                                Proses ini terus berjalan selama bot dalam status RUNNING, bahkan 24 jam!
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                                    <p className="text-blue-800 text-sm font-semibold">
+                                        💡 Tips: Buat prompt yang spesifik dan jelas agar AI bisa respond dengan tepat.
+                                        Contoh: "Anda adalah CS hotel. Jawab pertanyaan tentang harga, fasilitas, dan booking.
+                                        Jika tidak tahu, arahkan untuk hubungi nomor 08123456789."
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div >

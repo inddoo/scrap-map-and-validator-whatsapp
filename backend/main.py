@@ -20,7 +20,11 @@ from api.routes import (
     send_wa_personalized_handler,
     ai_generate_messages_handler,
     ai_auto_responder_handler,
-    send_wa_ai_personalized_handler
+    send_wa_ai_personalized_handler,
+    auto_responder_start_handler,
+    auto_responder_stop_handler,
+    auto_responder_status_handler,
+    auto_responder_update_prompt_handler
 )
 from api.schemas import (
     ScrapeRequest, 
@@ -30,7 +34,9 @@ from api.schemas import (
     WASendPersonalizedRequest,
     AIGenerateMessageRequest,
     AIAutoResponderRequest,
-    WASendAIPersonalizedRequest
+    WASendAIPersonalizedRequest,
+    AutoResponderStartRequest,
+    AutoResponderUpdateRequest
 )
 
 # Initialize FastAPI app
@@ -168,5 +174,35 @@ async def ai_auto_responder(request: AIAutoResponderRequest):
 
 @app.post("/wa/send-ai-personalized")
 async def send_wa_ai_personalized(request: WASendAIPersonalizedRequest):
+    """Send AI-generated personalized messages with auto-responder"""
+    return await send_wa_ai_personalized_handler(request)
+
+
+# ============================================================
+# PERSISTENT AUTO RESPONDER ENDPOINTS
+# ============================================================
+
+@app.post("/auto-responder/start")
+async def auto_responder_start(request: AutoResponderStartRequest):
+    """Start persistent auto responder service"""
+    return await auto_responder_start_handler(request)
+
+
+@app.post("/auto-responder/stop")
+async def auto_responder_stop():
+    """Stop persistent auto responder service"""
+    return await auto_responder_stop_handler()
+
+
+@app.get("/auto-responder/status")
+async def auto_responder_status():
+    """Get auto responder status"""
+    return await auto_responder_status_handler()
+
+
+@app.post("/auto-responder/update-prompt")
+async def auto_responder_update_prompt(request: AutoResponderUpdateRequest):
+    """Update auto responder prompt while running"""
+    return await auto_responder_update_prompt_handler(request)
     """Send AI-generated personalized messages with auto-responder"""
     return await send_wa_ai_personalized_handler(request)

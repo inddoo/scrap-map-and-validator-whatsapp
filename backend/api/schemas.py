@@ -110,3 +110,24 @@ class WASendAIPersonalizedRequest(BaseModel):
     max_delay: Optional[int] = 10
     auto_responder_enabled: Optional[bool] = False
     auto_responder_prompt: Optional[str] = None
+
+
+class AutoResponderStartRequest(BaseModel):
+    """Request schema for starting auto responder"""
+    response_prompt: Optional[str] = None
+    check_interval: Optional[int] = 1  # Check every N seconds (default: 1 for instant reply)
+
+
+class AutoResponderUpdateRequest(BaseModel):
+    """Request schema for updating auto responder prompt"""
+    response_prompt: str
+
+
+class AutoResponderStatusResponse(BaseModel):
+    """Response schema for auto responder status"""
+    success: bool
+    is_running: bool
+    response_prompt: Optional[str] = None
+    check_interval: Optional[int] = None
+    monitored_chats: Optional[int] = None
+    total_processed: Optional[int] = None

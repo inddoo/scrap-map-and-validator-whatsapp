@@ -16,9 +16,20 @@ class GeminiService:
         
         # Initialize new Google GenAI client
         self.client = genai.Client(api_key=api_key)
-        # Use Gemini Flash Latest - automatically uses the latest stable flash model
-        # This has better quota limits and avoids model-specific quota issues
-        self.model_name = 'models/gemini-flash-latest'
+        
+        # List of available models (in priority order)
+        # Will try each model if previous one fails
+        self.available_models = [
+            'models/gemini-2.0-flash',           # Fast and stable
+            'models/gemini-2.0-flash-001',       # Stable version
+            'models/gemini-2.5-flash',           # Latest but may have quota limits
+            'models/gemini-flash-latest',        # Auto-updates to latest
+            'models/gemini-2.0-flash-lite',      # Lighter version
+            'models/gemini-pro-latest',          # Higher quality
+        ]
+        
+        # Current model (will be set on first successful call)
+        self.current_model = None
     
     def generate_personalized_message(
         self, 
@@ -72,22 +83,48 @@ Format:
 
 Berikan HANYA teks pesan, tanpa penjelasan tambahan."""
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "quota" in error_msg or "resource_exhausted" in error_msg:
-                print(f"⚠️ Gemini API quota exceeded! Using fallback template.")
-                print(f"   Error: {e}")
-                print(f"   Tip: Quota resets in 24 hours or upgrade to paid plan.")
-            else:
-                print(f"Error generating message: {e}")
-            # Fallback to simple template replacement
-            return self._simple_template_replace(template, data)
+        # Try each model until one succeeds
+        last_error = None
+        
+        for model_name in self.available_models:
+            try:
+                print(f"  Trying model: {model_name}")
+                
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                
+                # Success! Remember this model for next time
+                if self.current_model != model_name:
+                    self.current_model = model_name
+                    print(f"  ✓ Using model: {model_name}")
+                
+                return response.text.strip()
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                last_error = e
+                
+                # Check error type
+                if "quota" in error_msg or "resource_exhausted" in error_msg:
+                    print(f"  ⚠️ {model_name}: Quota exceeded, trying next model...")
+                elif "503" in str(e) or "unavailable" in error_msg:
+                    print(f"  ⚠️ {model_name}: Service unavailable, trying next model...")
+                elif "404" in str(e) or "not found" in error_msg:
+                    print(f"  ⚠️ {model_name}: Model not found, trying next model...")
+                else:
+                    print(f"  ⚠️ {model_name}: Error - {e}, trying next model...")
+                
+                # Try next model
+                continue
+        
+        # All models failed, use fallback
+        print(f"⚠️ All Gemini models failed! Using fallback template.")
+        print(f"   Last error: {last_error}")
+        print(f"   Tip: Check API key, quota, or try again later.")
+        # Fallback to simple template replacement
+        return self._simple_template_replace(template, data)
     
     def generate_auto_response(
         self,
@@ -144,20 +181,41 @@ Buatkan balasan yang:
 
 Berikan HANYA teks balasan, tanpa penjelasan tambahan."""
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            error_msg = str(e).lower()
-            if "quota" in error_msg or "resource_exhausted" in error_msg:
-                print(f"⚠️ Gemini API quota exceeded for auto-responder!")
-                print(f"   Using default response.")
-            else:
-                print(f"Error generating response: {e}")
-            return "Terima kasih atas pesan Anda. Kami akan segera merespons."
+        # Try each model until one succeeds
+        last_error = None
+        
+        for model_name in self.available_models:
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt
+                )
+                
+                # Success! Remember this model
+                if self.current_model != model_name:
+                    self.current_model = model_name
+                    print(f"  ✓ Auto-responder using model: {model_name}")
+                
+                return response.text.strip()
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                last_error = e
+                
+                # Check error type and try next model
+                if "quota" in error_msg or "resource_exhausted" in error_msg:
+                    print(f"  ⚠️ {model_name}: Quota exceeded, trying next...")
+                elif "503" in str(e) or "unavailable" in error_msg:
+                    print(f"  ⚠️ {model_name}: Unavailable, trying next...")
+                else:
+                    print(f"  ⚠️ {model_name}: Error, trying next...")
+                
+                continue
+        
+        # All models failed
+        print(f"⚠️ All models failed for auto-responder! Using default response.")
+        print(f"   Last error: {last_error}")
+        return "Terima kasih atas pesan Anda. Kami akan segera merespons."
     
     def _format_data(self, data: Dict[str, str]) -> str:
         """Format data dictionary for prompt"""
